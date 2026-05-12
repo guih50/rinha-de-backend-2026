@@ -18,8 +18,7 @@ services:
           memory: "30MB"
 
   api1:
-    build: .
-    image: rinha-2026:local
+    image: ghcr.io/guih50/rinha-2026:latest
     environment:
       LISTEN_ADDR: /tmp/sockets/api1.sock
       NPROBE: "27"
@@ -38,7 +37,7 @@ services:
           memory: "160MB"
 
   api2:
-    image: rinha-2026:local
+    image: ghcr.io/guih50/rinha-2026:latest
     environment:
       LISTEN_ADDR: /tmp/sockets/api2.sock
       NPROBE: "27"
