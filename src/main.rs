@@ -80,7 +80,7 @@ fn not_found_resp() -> Response<Full<Bytes>> {
 
 // ── Server entry point ────────────────────────────────────────────────────────
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() {
     // Force index initialization and pre-fault all 96 MB of vector pages into RAM
     let _ = &*INDEX;

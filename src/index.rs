@@ -190,14 +190,11 @@ fn dist_sq(a: &[i16; 16], b: &[i16; 16]) -> i64 {
 
 /// AVX2 distance squared (14 active dims + 2 padding zeros).
 /// Uses i64 accumulation to handle SCALE=16000 (max diff=32000, MADD pair≤2.048B, i64 hsum safe).
+/// Compiled with +avx2 in rustflags — no runtime detection needed.
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn dist_sq_avx2(a: &[i16; 16], b: &[i16; 16]) -> i64 {
-    if is_x86_feature_detected!("avx2") {
-        dist_sq_avx2_inner(a, b)
-    } else {
-        dist_sq(a, b)
-    }
+    dist_sq_avx2_inner(a, b)
 }
 
 #[cfg(not(target_arch = "x86_64"))]
