@@ -1,0 +1,7 @@
+{
+  "participants": ["Guilherme Lima"],
+  "social": ["https://github.com/guih50"],
+  "source-code-repo": "https://github.com/guih50/rinha-de-backend-2026",
+  "stack": ["rust", "hyper", "tokio", "haproxy"],
+  "open_to_work": false
+}

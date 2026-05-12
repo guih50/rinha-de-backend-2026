@@ -1,0 +1,64 @@
+services:
+  lb:
+    image: haproxy:2.8-alpine
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/tmp/sockets
+    depends_on:
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: "30MB"
+
+  api1:
+    build: .
+    image: rinha-2026:local
+    environment:
+      LISTEN_ADDR: /tmp/sockets/api1.sock
+      NPROBE: "27"
+    volumes:
+      - sockets:/tmp/sockets
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /tmp/sockets/api1.sock"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "160MB"
+
+  api2:
+    image: rinha-2026:local
+    environment:
+      LISTEN_ADDR: /tmp/sockets/api2.sock
+      NPROBE: "27"
+    volumes:
+      - sockets:/tmp/sockets
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /tmp/sockets/api2.sock"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "160MB"
+
+volumes:
+  sockets:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
