@@ -57,7 +57,3 @@ services:
 
 volumes:
   sockets:
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
