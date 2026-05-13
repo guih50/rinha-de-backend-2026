@@ -8,7 +8,7 @@ Usage: python3 recall_check.py [ivf.bin] [test-data.json]
 import sys, json, struct, time
 import numpy as np
 
-# ── Config ────────────────────────────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 SCALE         = 16000.0
 MAX_AMOUNT    = 10000.0
 MAX_INSTALL   = 12.0
@@ -119,7 +119,7 @@ def load_ivf(path: str):
     print(f"Index loaded: nlist={nlist}, n_vectors={n_vectors:,}")
     return centroids, offsets, vectors, labels
 
-# ── Fast batched sweep ────────────────────────────────────────────────────────────────────
+# ── Fast batched sweep ────────────────────────────────────────────────────────
 
 def batch_dists(a_i16: np.ndarray, b_i16: np.ndarray) -> np.ndarray:
     """Batch squared L2: a (N, 16) i16, b (M, 16) i16 → (N, M) i64."""
@@ -203,7 +203,7 @@ def sweep_fast(queries_mat, exp_approved, centroids, offsets, vectors, labels, n
 
     return results
 
-# ── Main ────────────────────────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     # argv[1]: ivf path, argv[2]: nprobe comma-list OR test-data path, argv[3]: nprobe comma-list

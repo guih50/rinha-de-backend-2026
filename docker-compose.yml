@@ -21,7 +21,8 @@ services:
     image: ghcr.io/guih50/rinha-2026:latest
     environment:
       LISTEN_ADDR: /tmp/sockets/api1.sock
-      NPROBE: "20"
+      NPROBE: "16"
+      NPROBE_FULL: "60"
     volumes:
       - sockets:/tmp/sockets
     healthcheck:
@@ -40,7 +41,8 @@ services:
     image: ghcr.io/guih50/rinha-2026:latest
     environment:
       LISTEN_ADDR: /tmp/sockets/api2.sock
-      NPROBE: "20"
+      NPROBE: "16"
+      NPROBE_FULL: "60"
     volumes:
       - sockets:/tmp/sockets
     healthcheck:
