@@ -28,6 +28,14 @@ static NPROBE: LazyLock<usize> = LazyLock::new(|| {
         .unwrap_or(50)
 });
 
+// Wider probe used only when fraud_count == 2 (ambiguous). 0 = disabled.
+static NPROBE_FULL: LazyLock<usize> = LazyLock::new(|| {
+    std::env::var("NPROBE_FULL")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+});
+
 // ── HTTP handler ──────────────────────────────────────────────────────────────
 
 async fn handle(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, hyper::Error> {
@@ -45,7 +53,7 @@ fn fraud_score_handler(body: Bytes) -> Response<Full<Bytes>> {
     let fraud_count = match parse::parse_transaction(&body) {
         Ok(tx) => {
             let query = vectorize::vectorize(&tx);
-            INDEX.query(&query, *NPROBE)
+            INDEX.query(&query, *NPROBE, *NPROBE_FULL)
         }
         Err(_) => 0,
     };
@@ -80,7 +88,7 @@ fn not_found_resp() -> Response<Full<Bytes>> {
 
 // ── Server entry point ────────────────────────────────────────────────────────
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() {
     // Force index initialization and pre-fault all 96 MB of vector pages into RAM
     let _ = &*INDEX;
@@ -90,9 +98,10 @@ async fn main() {
     let listen_addr = std::env::var("LISTEN_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:9999".to_string());
 
+    let nprobe_full = *NPROBE_FULL;
     eprintln!(
-        "rinha: nprobe={}, listening on {}",
-        nprobe, listen_addr
+        "rinha: nprobe={} nprobe_full={}, listening on {}",
+        nprobe, nprobe_full, listen_addr
     );
 
     if listen_addr.starts_with('/') {

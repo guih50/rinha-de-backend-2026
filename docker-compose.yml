@@ -22,7 +22,8 @@ services:
     image: rinha-2026:local
     environment:
       LISTEN_ADDR: /tmp/sockets/api1.sock
-      NPROBE: "27"
+      NPROBE: "16"
+      NPROBE_FULL: "60"
     volumes:
       - sockets:/tmp/sockets
     healthcheck:
@@ -41,7 +42,8 @@ services:
     image: rinha-2026:local
     environment:
       LISTEN_ADDR: /tmp/sockets/api2.sock
-      NPROBE: "27"
+      NPROBE: "16"
+      NPROBE_FULL: "60"
     volumes:
       - sockets:/tmp/sockets
     healthcheck:

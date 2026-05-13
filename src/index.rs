@@ -12,6 +12,9 @@ pub struct IvfIndex {
     cluster_offsets: *const u32,
     vectors: *const [i16; 16],
     labels: *const u8,
+    // Per-cluster AABB for skipping clusters in the vector scan.
+    cluster_mins: Box<[[i16; 16]]>,
+    cluster_maxs: Box<[[i16; 16]]>,
 }
 
 // SAFETY: the data is &'static [u8] from include_bytes!, never mutated.
@@ -37,6 +40,8 @@ impl IvfIndex {
                 cluster_offsets: std::ptr::null(),
                 vectors: std::ptr::null(),
                 labels: std::ptr::null(),
+                cluster_mins: Vec::new().into_boxed_slice(),
+                cluster_maxs: Vec::new().into_boxed_slice(),
             };
         }
 
@@ -57,6 +62,27 @@ impl IvfIndex {
         // Labels
         let labels_ptr = data[offset..].as_ptr();
 
+        // Compute per-cluster AABB for pruning the vector scan.
+        let (cluster_mins, cluster_maxs) = unsafe {
+            let offsets = std::slice::from_raw_parts(cluster_offsets_ptr, nlist + 1);
+            let vecs = std::slice::from_raw_parts(vectors_ptr, n_vectors);
+            let mut mins = vec![[i16::MAX; 16]; nlist];
+            let mut maxs = vec![[i16::MIN; 16]; nlist];
+            for c in 0..nlist {
+                let start = offsets[c] as usize;
+                let end = offsets[c + 1] as usize;
+                let mn = &mut mins[c];
+                let mx = &mut maxs[c];
+                for idx in start..end {
+                    for d in 0..16 {
+                        if vecs[idx][d] < mn[d] { mn[d] = vecs[idx][d]; }
+                        if vecs[idx][d] > mx[d] { mx[d] = vecs[idx][d]; }
+                    }
+                }
+            }
+            (mins.into_boxed_slice(), maxs.into_boxed_slice())
+        };
+
         IvfIndex {
             nlist,
             n_vectors,
@@ -64,6 +90,8 @@ impl IvfIndex {
             cluster_offsets: cluster_offsets_ptr,
             vectors: vectors_ptr,
             labels: labels_ptr,
+            cluster_mins,
+            cluster_maxs,
         }
     }
 
@@ -98,14 +126,27 @@ impl IvfIndex {
     }
 
     /// Returns the number of fraud labels among the 5 nearest neighbors (0..=5).
-    pub fn query(&self, q: &[i16; 16], nprobe: usize) -> u8 {
+    /// Uses 2-phase probing: fast pass with nprobe, then a wider pass (nprobe_full)
+    /// only when the result is ambiguous (fraud_count == 2), so borderline cases
+    /// always get a thorough search without affecting average latency.
+    pub fn query(&self, q: &[i16; 16], nprobe: usize, nprobe_full: usize) -> u8 {
         if self.is_empty() {
             return 0;
         }
 
-        let nprobe = nprobe.min(self.nlist);
+        // Phase 1: fast path
+        let count = self.query_nprobe(q, nprobe);
 
-        // Step 1: find top-nprobe centroids
+        // Phase 2: only when result is ambiguous (exactly 2 fraud neighbors)
+        if count == 2 && nprobe_full > nprobe {
+            self.query_nprobe(q, nprobe_full)
+        } else {
+            count
+        }
+    }
+
+    fn query_nprobe(&self, q: &[i16; 16], nprobe: usize) -> u8 {
+        let nprobe = nprobe.min(self.nlist);
         let nprobe_capped = nprobe.min(256);
         let mut centroid_dists = [i64::MAX; 256];
         let mut centroid_ids = [0u32; 256];
@@ -128,7 +169,6 @@ impl IvfIndex {
             }
         }
 
-        // Step 2: scan selected clusters, maintain top-5
         let mut heap_dists = [i64::MAX; 5];
         let mut heap_fraud = [0u8; 5];
         let mut heap_worst = i64::MAX;
@@ -140,11 +180,16 @@ impl IvfIndex {
 
             for p in 0..nprobe_capped {
                 let c = centroid_ids[p] as usize;
+
+                // AABB lower-bound pruning: if the closest possible point in this
+                // cluster is already farther than our current 5th neighbor, skip it.
+                if aabb_lb_sq(q, &self.cluster_mins[c], &self.cluster_maxs[c]) >= heap_worst {
+                    continue;
+                }
+
                 let start = offsets[c] as usize;
                 let end = offsets[c + 1] as usize;
 
-                // Prefetch next cluster's opening vectors: hardware prefetcher can't
-                // predict the cluster-to-cluster pointer jump.
                 #[cfg(target_arch = "x86_64")]
                 if p + 1 < nprobe_capped {
                     let nc = centroid_ids[p + 1] as usize;
@@ -160,12 +205,7 @@ impl IvfIndex {
                 for idx in start..end {
                     let d = dist_sq_avx2(q, &vectors[idx]);
                     if d < heap_worst {
-                        insert_heap5(
-                            &mut heap_dists,
-                            &mut heap_fraud,
-                            d,
-                            labels[idx],
-                        );
+                        insert_heap5(&mut heap_dists, &mut heap_fraud, d, labels[idx]);
                         heap_worst = heap_dists[4];
                     }
                 }
@@ -174,6 +214,44 @@ impl IvfIndex {
 
         heap_fraud.iter().sum()
     }
+}
+
+// ── AABB lower-bound ─────────────────────────────────────────────────────────
+
+/// Squared distance from q to the nearest point on the axis-aligned bounding box [mn, mx].
+/// Returns 0 if q is inside the box. Exact lower bound for all vectors in the cluster.
+#[inline(always)]
+fn aabb_lb_sq(q: &[i16; 16], mn: &[i16; 16], mx: &[i16; 16]) -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    return unsafe { aabb_lb_sq_avx2(q, mn, mx) };
+    #[cfg(not(target_arch = "x86_64"))]
+    aabb_lb_sq_scalar(q, mn, mx)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn aabb_lb_sq_scalar(q: &[i16; 16], mn: &[i16; 16], mx: &[i16; 16]) -> i64 {
+    let mut lb = 0i64;
+    for i in 0..14 {
+        let qi = q[i] as i64;
+        let lo = mn[i] as i64;
+        let hi = mx[i] as i64;
+        let d = if qi < lo { lo - qi } else if qi > hi { qi - hi } else { 0 };
+        lb += d * d;
+    }
+    lb
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn aabb_lb_sq_avx2(q: &[i16; 16], mn: &[i16; 16], mx: &[i16; 16]) -> i64 {
+    let vq  = _mm256_loadu_si256(q.as_ptr()  as *const __m256i);
+    let vmn = _mm256_loadu_si256(mn.as_ptr() as *const __m256i);
+    let vmx = _mm256_loadu_si256(mx.as_ptr() as *const __m256i);
+    // clamp q to [mn, mx] — same as nearest point on AABB
+    let clamped = _mm256_max_epi16(_mm256_min_epi16(vq, vmx), vmn);
+    let diff = _mm256_sub_epi16(vq, clamped);
+    let sq = _mm256_madd_epi16(diff, diff);
+    hsum_epi32_to_i64(sq)
 }
 
 // ── Distance functions ────────────────────────────────────────────────────────
@@ -190,14 +268,11 @@ fn dist_sq(a: &[i16; 16], b: &[i16; 16]) -> i64 {
 
 /// AVX2 distance squared (14 active dims + 2 padding zeros).
 /// Uses i64 accumulation to handle SCALE=16000 (max diff=32000, MADD pair≤2.048B, i64 hsum safe).
+/// Compiled with +avx2 in rustflags — no runtime detection needed.
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn dist_sq_avx2(a: &[i16; 16], b: &[i16; 16]) -> i64 {
-    if is_x86_feature_detected!("avx2") {
-        dist_sq_avx2_inner(a, b)
-    } else {
-        dist_sq(a, b)
-    }
+    dist_sq_avx2_inner(a, b)
 }
 
 #[cfg(not(target_arch = "x86_64"))]

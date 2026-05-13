@@ -34,10 +34,19 @@ fn distance_sq(a: &[i16; 16], b: &[i16; 16]) -> i64 {
 fn main() {
     println!("cargo:rerun-if-changed=resources/references.json.gz");
     println!("cargo:rerun-if-changed=resources/mcc_risk.json");
+    println!("cargo:rerun-if-env-changed=IVF_BIN");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
     generate_mcc_lut(&out_dir);
+
+    // Allow skipping k-means by providing a pre-built index
+    if let Ok(prebuilt) = std::env::var("IVF_BIN") {
+        let ivf_path = out_dir.join("ivf.bin");
+        eprintln!("build.rs: using pre-built IVF: {prebuilt}");
+        std::fs::copy(&prebuilt, &ivf_path).expect("copy pre-built IVF");
+        return;
+    }
 
     let gz_path = PathBuf::from("resources/references.json.gz");
     if !gz_path.exists() {
